@@ -9,25 +9,61 @@ import {
 
 function App() {
     return (
-        <section className='bg-slate-950 text-white min-h-screen flex items-center justify-center font-sans'>
-            <NavigationMenu>
-                <NavigationMenuList>
-                    {tabList.map((tab) => (
-                        <NavigationMenuItem key={tab.id} value={String(tab.id)}>
+        <section className='bg-slate-950 text-white min-h-screen flex flex-col items-center justify-center font-sans gap-20 p-10'>
+            <div className='flex flex-col items-center gap-4'>
+                <h2 className='text-xl font-bold text-slate-400'>
+                    1. Anchored to Container (Bottom Left)
+                </h2>
+                <NavigationMenu>
+                    <NavigationMenuStructure />
+                    <NavigationMenuViewport
+                        anchor='container'
+                        placement='bottom left'
+                    />
+                </NavigationMenu>
+            </div>
+
+            <div className='flex flex-col items-center gap-4'>
+                <h2 className='text-xl font-bold text-slate-400'>
+                    2. Anchored to Trigger (Bottom Center)
+                </h2>
+                <NavigationMenu>
+                    <NavigationMenuStructure />
+                    <NavigationMenuViewport
+                        anchor='trigger'
+                        placement='bottom'
+                    />
+                </NavigationMenu>
+            </div>
+        </section>
+    );
+}
+
+function NavigationMenuStructure() {
+    return (
+        <NavigationMenuList>
+            {tabList.map((tab) => (
+                <NavigationMenuItem key={tab.id} value={String(tab.id)}>
+                    {tab.children ? (
+                        <>
                             <NavigationMenuTrigger>
                                 {tab.label}
                             </NavigationMenuTrigger>
-                            {tab.children && (
-                                <NavigationMenuContent>
-                                    <TabContent tabId={tab.id} />
-                                </NavigationMenuContent>
-                            )}
-                        </NavigationMenuItem>
-                    ))}
-                </NavigationMenuList>
-                <NavigationMenuViewport />
-            </NavigationMenu>
-        </section>
+                            <NavigationMenuContent>
+                                <TabContent tabId={tab.id} />
+                            </NavigationMenuContent>
+                        </>
+                    ) : (
+                        <a
+                            href='#'
+                            className='group inline-flex w-max items-center justify-center outline-none transition-all duration-300 ease-out cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:text-white px-5 py-2.5 rounded-xl bg-transparent text-slate-300 hover:text-white hover:bg-white/5'
+                        >
+                            {tab.label}
+                        </a>
+                    )}
+                </NavigationMenuItem>
+            ))}
+        </NavigationMenuList>
     );
 }
 
@@ -39,10 +75,9 @@ function TabContent({ tabId }: { tabId: number }) {
         <div
             role='menu'
             aria-label={tab.label}
-            className={`p-3 grid gap-2 ${
+            className={`p-3 grid gap-2 w-fit ${
                 tab.cols === 2 ? 'grid-cols-2' : 'grid-cols-1'
-            }`}
-            style={{ width: tab.cols === 2 ? 600 : 300 }}
+            } ${tab.id === 3 ? 'min-w-100' : ''} ${tab.id === 1 ? 'min-w-80' : ''}`}
         >
             {tab.children.map((child) => (
                 <a
@@ -124,7 +159,19 @@ const tabList = [
             },
         ],
     },
-    { id: 3, label: 'Docs' },
+    {
+        id: 3,
+        label: 'Resources',
+        cols: 1,
+        children: [
+            {
+                id: 1,
+                label: 'Button',
+                description: 'How to use Button component',
+            },
+        ],
+    },
+    { id: 4, label: 'Docs' },
 ];
 
 export default App;

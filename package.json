@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-aria/overlays": "^3.31.1",
+    "@react-types/overlays": "^3.9.3",
     "@tailgrids/icons": "^2.0.0",
     "@tailwindcss/vite": "^4.2.0",
     "motion": "^12.34.3",

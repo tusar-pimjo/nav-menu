@@ -1,4 +1,6 @@
+import type { Placement } from '@react-types/overlays';
 import { ChevronDown } from '@tailgrids/icons';
+import type { HTMLMotionProps } from 'motion/react';
 import { AnimatePresence, motion } from 'motion/react';
 import * as React from 'react';
 import { twMerge } from 'tailwind-merge';
@@ -36,6 +38,7 @@ type NavigationMenuContextValue = {
     closeImmediately: () => void;
     cancelClose: () => void;
     triggerRef: React.RefObject<HTMLUListElement | null>;
+    triggersRef: React.MutableRefObject<Map<string, HTMLElement | null>>;
     popoverContentRef: React.RefObject<HTMLDivElement | null>;
     containerSize: { width: number; height: number } | null;
     measureCallback: (node: HTMLDivElement | null) => void;
@@ -85,6 +88,9 @@ export const NavigationMenu = React.forwardRef<
     const [prevValue, setPrevValue] = React.useState<string | null>(null);
 
     const triggerRef = React.useRef<HTMLUListElement>(null);
+    const triggersRef = React.useRef<Map<string, HTMLElement | null>>(
+        new Map(),
+    );
     const popoverContentRef = React.useRef<HTMLDivElement>(null);
     const closeTimeout = React.useRef<ReturnType<typeof setTimeout>>(undefined);
     const [containerSize, setContainerSize] = React.useState<{
@@ -147,15 +153,33 @@ export const NavigationMenu = React.forwardRef<
         return () => clearTimeout(closeTimeout.current);
     }, []);
 
+    const observerRef = React.useRef<ResizeObserver | null>(null);
+
     const measureCallback = React.useCallback((node: HTMLDivElement | null) => {
-        if (node) {
-            requestAnimationFrame(() => {
-                setContainerSize({
-                    width: node.offsetWidth,
-                    height: node.offsetHeight,
-                });
-            });
+        if (!node) return;
+
+        if (observerRef.current) {
+            observerRef.current.disconnect();
+            observerRef.current = null;
         }
+        observerRef.current = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            if (entry) {
+                setContainerSize({
+                    width: (entry.target as HTMLElement).offsetWidth,
+                    height: (entry.target as HTMLElement).offsetHeight,
+                });
+            }
+        });
+        observerRef.current.observe(node);
+    }, []);
+
+    React.useEffect(() => {
+        return () => {
+            if (observerRef.current) {
+                observerRef.current.disconnect();
+            }
+        };
     }, []);
 
     React.useEffect(() => {
@@ -196,6 +220,7 @@ export const NavigationMenu = React.forwardRef<
                 closeImmediately,
                 cancelClose,
                 triggerRef,
+                triggersRef,
                 popoverContentRef,
                 containerSize,
                 measureCallback,
@@ -305,7 +330,27 @@ export const NavigationMenuTrigger = React.forwardRef<
         closeImmediately,
         contentStore,
         popoverContentRef,
+        triggersRef,
     } = useNavigationMenu();
+
+    const mergedRef = React.useCallback(
+        (node: HTMLButtonElement | null) => {
+            triggersRef.current.set(value, node);
+            if (typeof ref === 'function') {
+                ref(node);
+            } else if (ref) {
+                ref.current = node;
+            }
+        },
+        [triggersRef, value, ref],
+    );
+
+    React.useEffect(() => {
+        const triggersMap = triggersRef.current;
+        return () => {
+            triggersMap.delete(value);
+        };
+    }, [value, triggersRef]);
 
     const getHasContent = React.useCallback(
         () => contentStore.contents.has(value),
@@ -320,7 +365,7 @@ export const NavigationMenuTrigger = React.forwardRef<
 
     return (
         <button
-            ref={ref}
+            ref={mergedRef}
             aria-haspopup={hasContent ? 'true' : undefined}
             aria-expanded={hasContent ? isActive : undefined}
             onMouseEnter={() => {
@@ -328,8 +373,8 @@ export const NavigationMenuTrigger = React.forwardRef<
             }}
             onMouseLeave={closeNav}
             onFocus={() => {
-                if (isOpen && hasContent) {
-                    openNav(value);
+                if (isOpen && activeValue !== value) {
+                    closeImmediately();
                 }
             }}
             onClick={() => {
@@ -424,171 +469,286 @@ const contentVariants = {
     }),
 };
 
+export interface NavigationMenuViewportProps extends Omit<
+    HTMLMotionProps<'div'>,
+    'ref'
+> {
+    anchor?: 'container' | 'trigger';
+    placement?: Placement;
+}
+
 export const NavigationMenuViewport = React.forwardRef<
     HTMLDivElement,
-    React.HTMLAttributes<HTMLDivElement>
->(({ className, onKeyDown, ...props }, ref) => {
-    const {
-        isOpen,
-        activeValue,
-        popoverContentRef,
-        containerSize,
-        measureCallback,
-        cancelClose,
-        closeNav,
-        triggerRef,
-        contentStore,
-        direction,
-    } = useNavigationMenu();
-
-    const activeContent = React.useSyncExternalStore(
-        contentStore.subscribe,
-        () => (activeValue ? contentStore.contents.get(activeValue) : null),
-    );
-
-    const mergedRef = React.useCallback(
-        (node: HTMLDivElement) => {
-            popoverContentRef.current = node;
-            if (typeof ref === 'function') {
-                ref(node);
-            } else if (ref) {
-                ref.current = node;
-            }
+    NavigationMenuViewportProps
+>(
+    (
+        {
+            className,
+            onKeyDown,
+            anchor = 'container',
+            placement = 'bottom',
+            ...props
         },
-        [popoverContentRef, ref],
-    );
+        ref,
+    ) => {
+        const {
+            isOpen,
+            activeValue,
+            popoverContentRef,
+            containerSize,
+            measureCallback,
+            cancelClose,
+            closeNav,
+            closeImmediately,
+            triggerRef,
+            triggersRef,
+            contentStore,
+            direction,
+        } = useNavigationMenu();
 
-    const handleFocusLeave = React.useCallback(
-        (e: React.FocusEvent) => {
-            const relatedTarget = e.relatedTarget as Node | null;
+        const activeContent = React.useSyncExternalStore(
+            contentStore.subscribe,
+            () => (activeValue ? contentStore.contents.get(activeValue) : null),
+        );
 
-            if (!relatedTarget) {
-                closeNav();
+        const mergedRef = React.useCallback(
+            (node: HTMLDivElement | null) => {
+                popoverContentRef.current = node;
+                if (typeof ref === 'function') {
+                    ref(node);
+                } else if (ref) {
+                    ref.current = node;
+                }
+            },
+            [popoverContentRef, ref],
+        );
+
+        const [position, setPosition] = React.useState<{
+            top: number;
+            left: number;
+        } | null>(null);
+
+        const [isInitialPlacement, setIsInitialPlacement] =
+            React.useState(true);
+
+        React.useLayoutEffect(() => {
+            if (!isOpen) {
+                setIsInitialPlacement(true);
+            } else if (position) {
+                requestAnimationFrame(() => {
+                    setIsInitialPlacement(false);
+                });
+            }
+        }, [isOpen, position]);
+
+        React.useLayoutEffect(() => {
+            if (!isOpen || !activeValue || !containerSize) {
+                if (!isOpen) setPosition(null);
                 return;
             }
 
-            const isInsideTrigger = triggerRef.current?.contains(relatedTarget);
-            const isInsidePopover =
-                popoverContentRef.current?.contains(relatedTarget);
+            const targetNode =
+                anchor === 'trigger' && activeValue
+                    ? triggersRef.current.get(activeValue) || triggerRef.current
+                    : triggerRef.current;
 
-            if (!isInsideTrigger && !isInsidePopover) {
-                closeNav();
+            if (!targetNode) return;
+
+            const targetRect = targetNode.getBoundingClientRect();
+            const offset = 12;
+            const padding = 12;
+
+            let left = 0;
+            const top = targetRect.bottom + offset;
+
+            if (placement === 'bottom left' || placement.includes('start')) {
+                left = targetRect.left;
+            } else if (
+                placement === 'bottom right' ||
+                placement.includes('end')
+            ) {
+                left = targetRect.right - containerSize.width;
+            } else {
+                left =
+                    targetRect.left +
+                    targetRect.width / 2 -
+                    containerSize.width / 2;
             }
-        },
-        [closeNav, triggerRef, popoverContentRef],
-    );
 
-    if (!isOpen || !activeValue) return null;
+            left = Math.max(
+                padding,
+                Math.min(
+                    left,
+                    window.innerWidth - containerSize.width - padding,
+                ),
+            );
 
-    return (
-        <div
-            ref={mergedRef}
-            className={cn(
-                'absolute top-full left-0 pt-3 z-50 overflow-hidden flex justify-center',
-                className,
-            )}
-            onMouseEnter={cancelClose}
-            onMouseLeave={closeNav}
-            onFocus={cancelClose}
-            onBlur={handleFocusLeave}
-            onKeyDown={(e) => {
-                if (e.key === 'Tab') {
-                    const popover = popoverContentRef.current;
-                    if (!popover) return;
+            setPosition({ top, left });
+        }, [
+            activeValue,
+            isOpen,
+            anchor,
+            triggersRef,
+            triggerRef,
+            containerSize,
+            placement,
+        ]);
 
-                    const focusableElements = Array.from(
-                        popover.querySelectorAll<HTMLElement>(
-                            'a[href], button, input, textarea, select, details, [tabindex]:not([tabindex="-1"])',
-                        ),
-                    ).filter(
-                        (el) =>
-                            !el.hasAttribute('disabled') &&
-                            el.getAttribute('aria-hidden') !== 'true',
-                    );
+        const handleFocusLeave = React.useCallback(
+            (e: React.FocusEvent) => {
+                const relatedTarget = e.relatedTarget as Node | null;
 
-                    if (focusableElements.length > 0) {
-                        const firstElement = focusableElements[0];
-                        const lastElement =
-                            focusableElements[focusableElements.length - 1];
+                if (!relatedTarget) {
+                    closeNav();
+                    return;
+                }
 
-                        if (e.shiftKey && e.target === firstElement) {
-                            e.preventDefault();
-                            const activeTrigger =
-                                triggerRef.current?.querySelector<HTMLElement>(
-                                    `button[aria-expanded="true"]`,
-                                );
-                            if (activeTrigger) activeTrigger.focus();
-                        } else if (!e.shiftKey && e.target === lastElement) {
-                            const activeTrigger =
-                                triggerRef.current?.querySelector<HTMLElement>(
-                                    `button[aria-expanded="true"]`,
-                                );
-                            if (activeTrigger) {
-                                const allTriggers = Array.from(
-                                    triggerRef.current?.querySelectorAll<HTMLElement>(
-                                        'button',
-                                    ) || [],
-                                );
-                                const currentIndex =
-                                    allTriggers.indexOf(activeTrigger);
-                                const nextTrigger =
-                                    allTriggers[currentIndex + 1];
-                                if (nextTrigger) {
-                                    e.preventDefault();
-                                    nextTrigger.focus();
+                const isInsideTrigger =
+                    triggerRef.current?.contains(relatedTarget);
+                const isInsidePopover =
+                    popoverContentRef.current?.contains(relatedTarget);
+
+                if (!isInsideTrigger && !isInsidePopover) {
+                    closeNav();
+                }
+            },
+            [closeNav, triggerRef, popoverContentRef],
+        );
+
+        if (!isOpen || !activeValue) return null;
+
+        return (
+            <motion.div
+                ref={mergedRef as React.Ref<HTMLDivElement>}
+                className={cn('fixed z-50', className)}
+                style={{
+                    ...props.style,
+                    visibility:
+                        position && containerSize ? 'visible' : 'hidden',
+                    pointerEvents: position && containerSize ? 'auto' : 'none',
+                }}
+                animate={{
+                    top: position?.top,
+                    left: position?.left,
+                    width: containerSize?.width,
+                    height: containerSize?.height,
+                }}
+                transition={{
+                    duration: isInitialPlacement ? 0 : 0.35,
+                    ease: [0.22, 1, 0.36, 1],
+                }}
+                onMouseEnter={cancelClose}
+                onMouseLeave={closeNav}
+                onFocus={cancelClose}
+                onBlur={handleFocusLeave}
+                onKeyDown={(e) => {
+                    if (e.key === 'Tab') {
+                        const popover = popoverContentRef.current;
+                        if (!popover) return;
+
+                        const focusableElements = Array.from(
+                            popover.querySelectorAll<HTMLElement>(
+                                'a[href], button, input, textarea, select, details, [tabindex]:not([tabindex="-1"])',
+                            ),
+                        ).filter(
+                            (el) =>
+                                !el.hasAttribute('disabled') &&
+                                el.getAttribute('aria-hidden') !== 'true',
+                        );
+
+                        if (focusableElements.length > 0) {
+                            const firstElement = focusableElements[0];
+                            const lastElement =
+                                focusableElements[focusableElements.length - 1];
+
+                            if (e.shiftKey && e.target === firstElement) {
+                                e.preventDefault();
+                                const activeTrigger =
+                                    triggerRef.current?.querySelector<HTMLElement>(
+                                        `button[aria-expanded="true"]`,
+                                    );
+                                if (activeTrigger) {
+                                    activeTrigger.focus();
+                                    closeImmediately();
+                                }
+                            } else if (
+                                !e.shiftKey &&
+                                e.target === lastElement
+                            ) {
+                                const activeTrigger =
+                                    triggerRef.current?.querySelector<HTMLElement>(
+                                        `button[aria-expanded="true"]`,
+                                    );
+                                if (activeTrigger) {
+                                    const allFocusableItems = Array.from(
+                                        triggerRef.current?.querySelectorAll<HTMLElement>(
+                                            'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+                                        ) || [],
+                                    );
+                                    const currentIndex =
+                                        allFocusableItems.indexOf(
+                                            activeTrigger,
+                                        );
+                                    const nextItem =
+                                        allFocusableItems[currentIndex + 1];
+                                    if (nextItem) {
+                                        e.preventDefault();
+                                        nextItem.focus();
+                                        closeImmediately();
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                onKeyDown?.(e);
-            }}
-            {...props}
-        >
-            <motion.div
-                animate={
-                    containerSize
-                        ? {
-                              width: containerSize.width,
-                              height: containerSize.height,
-                          }
-                        : undefined
-                }
-                initial={false}
-                className='overflow-hidden bg-white dark:bg-slate-900 shadow-2xl border border-black/5 dark:border-white/10 relative'
-                style={{ borderRadius: 12 }}
-                transition={{
-                    width: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
-                    height: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+                    onKeyDown?.(e);
                 }}
+                {...props}
             >
-                <AnimatePresence
-                    mode='popLayout'
+                <motion.div
+                    animate={
+                        containerSize
+                            ? {
+                                  width: containerSize.width,
+                                  height: containerSize.height,
+                              }
+                            : undefined
+                    }
                     initial={false}
-                    custom={direction}
+                    className='overflow-hidden bg-white dark:bg-slate-900 shadow-2xl border border-black/5 dark:border-white/10 relative'
+                    style={{ borderRadius: 12 }}
+                    transition={{
+                        width: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+                        height: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+                    }}
                 >
-                    <motion.div
-                        key={activeValue}
+                    <AnimatePresence
+                        mode='popLayout'
+                        initial={false}
                         custom={direction}
-                        variants={contentVariants}
-                        initial='initial'
-                        animate='animate'
-                        exit='exit'
-                        transition={{
-                            x: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
-                            opacity: {
-                                duration: 0.175,
-                                ease: [0.25, 0.1, 0.25, 1],
-                            },
-                        }}
                     >
-                        <div ref={measureCallback} className='w-max'>
-                            {activeContent}
-                        </div>
-                    </motion.div>
-                </AnimatePresence>
+                        <motion.div
+                            key={activeValue}
+                            custom={direction}
+                            variants={contentVariants}
+                            initial='initial'
+                            animate='animate'
+                            exit='exit'
+                            transition={{
+                                x: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+                                opacity: {
+                                    duration: 0.175,
+                                    ease: [0.25, 0.1, 0.25, 1],
+                                },
+                            }}
+                        >
+                            <div ref={measureCallback} className='w-max'>
+                                {activeContent}
+                            </div>
+                        </motion.div>
+                    </AnimatePresence>
+                </motion.div>
             </motion.div>
-        </div>
-    );
-});
+        );
+    },
+);
 NavigationMenuViewport.displayName = 'NavigationMenuViewport';
